@@ -1,1 +1,0 @@
-// Extended systems placeholder
