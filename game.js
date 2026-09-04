@@ -1,131 +1,67 @@
-const GRID = 5, C = 64, GAP = 6, PAD = 10, MAX = 6;
-const U = {
-  sword:{n:'ดาบ',i:'⚔',hp:140,atk:48,cr:.12},
-  spear:{n:'หอก',i:'➶',hp:115,atk:40,cr:.10},
-  gun:{n:'ปืน',i:'▰',hp:95,atk:34,cr:.15},
-  bow:{n:'ธนู',i:'🏹',hp:75,atk:56,cr:.20},
-  cannon:{n:'ปืนใหญ่',i:'✹',hp:60,atk:30,cr:.08},
-  axe:{n:'ขวาน',i:'🪓',hp:110,atk:30,cr:.12},
-  priest:{n:'นักบวช',i:'✚',hp:90,atk:18,cr:.05}
+const GRID=3,MAX=6,CELL=88,GAP=8,PAD=16;
+const TYPES={
+  sword:{name:'ดาบ',icon:'⚔',role:'MELEE',hp:140,atk:48,crit:.12,desc:'ตัวหน้าสุดในคอลัมน์'},
+  spear:{name:'หอก',icon:'⟶',role:'PIERCE',hp:115,atk:40,crit:.10,desc:'ตัวหน้า + ตัวถัดไป 100/50%'},
+  gun:{name:'ปืน',icon:'▰',role:'RIFLE',hp:95,atk:34,crit:.15,desc:'ยิงทะลุคอลัมน์ 100/60/30%'},
+  bow:{name:'ธนู',icon:'➶',role:'RANGED',hp:75,atk:56,crit:.20,desc:'เล็งช่องใดก็ได้'},
+  cannon:{name:'ปืนใหญ่',icon:'✹',role:'BLAST',hp:60,atk:30,crit:.08,desc:'กากบาท 70/45%'},
+  axe:{name:'ขวาน',icon:'🪓',role:'ROW',hp:110,atk:30,crit:.12,desc:'ฟันทั้งแถว'},
+  priest:{name:'นักบวช',icon:'✚',role:'HEALER',hp:90,atk:18,crit:.05,desc:'โจมตีอ่อน + คลิกเพื่อนเพื่อฮีล'}
 };
-const ORDER = ['sword','spear','gun','bow','cannon','axe','priest'];
-const S = {phase:'deploy',turn:'player',auto:false,busy:false,world:1,stage:1,pick:null,selected:null,boss:null,g:{player:[],bot:[]},v:{player:[],bot:[]}};
-const grid = () => Array.from({length:GRID},()=>Array(GRID).fill(null));
-S.g.player=grid(); S.g.bot=grid(); S.v.player=grid(); S.v.bot=grid();
-const $=x=>document.getElementById(x);
-const wait=ms=>new Promise(r=>setTimeout(r,ms));
-const alive=s=>{const a=[],seen=new Set();S.g[s].flat().forEach(u=>{if(u&&u.hp>0&&!seen.has(u)){seen.add(u);a.push(u)}});return a};
-const pos=(s,u)=>{for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++)if(S.g[s][r][c]===u)return{r,c};return null};
-const W=GRID*C+(GRID-1)*GAP+PAD*2;
-const H=2*(GRID*C+(GRID-1)*GAP)+100;
-let scene, audioCtx;
-function log(x,c=''){const d=document.createElement('div');d.className=c;d.textContent=x;$('log').appendChild(d);$('log').scrollTop=1e9}
-function say(x){$('turnBox').textContent=x}
-function sound(type='hit'){
-  try{
-    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
-    if(audioCtx.state==='suspended')audioCtx.resume();
-    const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);
-    const f={sword:[180,90],spear:[260,120],gun:[110,70],bow:[520,260],cannon:[75,45],axe:[140,65],priest:[620,420],heal:[700,900],ult:[160,760],deploy:[360,500],win:[520,880],lose:[180,80]}[type]||[220,100];
-    o.frequency.setValueAtTime(f[0],audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(Math.max(30,f[1]),audioCtx.currentTime+.14);g.gain.setValueAtTime(.0001,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(.07,audioCtx.currentTime+.01);g.gain.exponentialRampToValueAtTime(.0001,audioCtx.currentTime+.16);o.start();o.stop(audioCtx.currentTime+.17);
-  }catch(e){}
-}
-function mk(t,boss=false){const h=Math.round(U[t].hp*(boss?(2.5+S.world*.65):1));return{type:t,hp:h,max:h,gauge:0,boss,cells:boss?[[0,2],[0,3],[1,2],[1,3]]:null}}
+const ORDER=Object.keys(TYPES);
+const grid=()=>Array.from({length:GRID},()=>Array(GRID).fill(null));
+const S={phase:'deploy',turn:'player',busy:false,auto:false,ai:'normal',world:1,stage:1,pick:null,selected:null,g:{player:grid(),bot:grid()},v:{player:grid(),bot:grid()},boss:null,bossView:null};
+let scene,audioCtx;
+const $=id=>document.getElementById(id),wait=ms=>new Promise(r=>setTimeout(r,ms));
+const front=side=>side==='bot'?[0,1,2]:[2,1,0];
+const coord=(r,c)=>String.fromCharCode(65+c)+(r+1);
+const alive=side=>{const out=[],seen=new Set();S.g[side].flat().forEach(u=>{if(u&&u.hp>0&&!seen.has(u)){seen.add(u);out.push(u)}});return out};
+const pos=(side,u)=>{for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++)if(S.g[side][r][c]===u)return{r,c};return null};
+const W=GRID*CELL+(GRID-1)*GAP+PAD*2,H=2*(GRID*CELL+(GRID-1)*GAP)+92;
+const cx=c=>PAD+c*(CELL+GAP)+CELL/2;
+const cy=(side,r)=>(side==='bot'?28:28+GRID*(CELL+GAP)+56)+r*(CELL+GAP)+CELL/2;
+function log(text,cls=''){const d=document.createElement('div');d.textContent=text;d.className=cls;$('log').appendChild(d);$('log').scrollTop=1e9}
+function say(text){$('turnBox').textContent=text}
+function campaign(){if(S.phase==='complete')$('campaign').textContent='🏆 CAMPAIGN COMPLETE · 10 WORLD · 50 STAGES';else $('campaign').textContent=`WORLD ${S.world}/10 · STAGE ${S.stage}/5 · ${S.stage===5?'BOSS STAGE':''}`}
+function sound(type='hit'){try{audioCtx=audioCtx||new(window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==='suspended')audioCtx.resume();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);const f={sword:[180,90],spear:[260,120],gun:[110,70],bow:[520,260],cannon:[75,45],axe:[140,65],priest:[620,420],heal:[700,900],ult:[160,760],deploy:[360,500],win:[520,880],lose:[180,80]}[type]||[220,100];o.frequency.setValueAtTime(f[0],audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(Math.max(30,f[1]),audioCtx.currentTime+.14);g.gain.setValueAtTime(.0001,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(.07,audioCtx.currentTime+.01);g.gain.exponentialRampToValueAtTime(.0001,audioCtx.currentTime+.16);o.start();o.stop(audioCtx.currentTime+.17)}catch(e){}}
+function mk(type,boss=false){const h=Math.round(TYPES[type].hp*(boss?2.5+S.world*.65:1));return{type,hp:h,max:h,gauge:0,boss,cells:boss?[[0,1],[0,2],[1,1],[1,2]]:null}}
 function addGauge(u,n){u.gauge=Math.min(100,u.gauge+n)}
-function cellX(c){return PAD+c*(C+GAP)+C/2}
-function cellY(s,r){return(s==='bot'?28:GRID*(C+GAP)+54)+r*(C+GAP)+C/2}
-function boardCellAt(pointer,s){const y0=s==='bot'?28:GRID*(C+GAP)+54;const c=Math.floor((pointer.x-PAD)/(C+GAP));const r=Math.floor((pointer.y-y0)/(C+GAP));if(r<0||r>=GRID||c<0||c>=GRID)return null;const x=PAD+c*(C+GAP),y=y0+r*(C+GAP);if(pointer.x<x||pointer.x>x+C||pointer.y<y||pointer.y>y+C)return null;return{r,c}}
-function targets(s,r,c,t){
-  const g=S.g[s],rows=s==='bot'?[0,1,2,3,4]:[4,3,2,1,0];
-  if(t==='bow')return [{r,c,k:1}];
-  if(t==='axe'){const fr=rows.find(x=>g[x].some(u=>u&&u.hp>0));return fr==null?[]:[0,1,2,3,4].map(cc=>({r:fr,c:cc,k:1}))}
-  if(t==='cannon')return [{r,c,k:.7},[1,0],[-1,0],[0,1],[0,-1]].map((q,i)=>i===0?q:{r:r+q[0],c:c+q[1],k:.45});
-  const line=rows.filter(rr=>g[rr][c]?.hp>0),k=t==='gun'?[1,.6,.3]:t==='spear'?[1,.5]:[1];
-  return line.slice(0,k.length).map((rr,i)=>({r:rr,c,k:k[i]}));
-}
-function calc(u,tr,tc,foe,ult=false){
-  if(u.type==='priest')return[];
-  const mult=ult?1.3:1, a=U[u.type];
-  return targets(foe,tr,tc,u.type).filter(h=>h.r>=0&&h.r<GRID&&h.c>=0&&h.c<GRID&&S.g[foe][h.r][h.c]).map(h=>{const cr=Math.random()<a.cr;let d=Math.max(1,Math.round(a.atk*h.k*(.85+Math.random()*.3)*mult));if(cr)d=Math.round(d*1.5);return{...h,d,cr}});
-}
-function sync(s,u){for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++)if(S.g[s][r][c]===u)update(s,r,c)}
-function heal(s,r,c,n){const u=S.g[s][r][c];if(!u||u.hp<=0)return false;const old=u.hp;u.hp=Math.min(u.max,u.hp+n);update(s,r,c);float(cellX(c),cellY(s,r),`+${u.hp-old}`,'#4ade80');burst(cellX(c),cellY(s,r),[0x4ade80,0xffffff],12);return u.hp>old}
-async function hit(s,hs){
-  for(const h of hs){let u=S.g[s][h.r][h.c];if(u?.boss)u=S.boss;if(!u||u.hp<=0)continue;u.hp=Math.max(0,u.hp-h.d);addGauge(u,8);sync(s,u);sound(u.type);float(cellX(h.c),cellY(s,h.r),`${h.cr?'CRIT! ':''}-${h.d}`,h.cr?'#ff3333':'#fff',h.cr);burst(cellX(h.c),cellY(s,h.r),h.cr?[0xffffff,0xff3333,0xffd166]:[0xffffff,0xffd166],h.cr?18:9);log(`→ ${U[u.type].n} ${h.cr?'CRIT ':''}${h.d} dmg · HP ${u.hp}`,'dm');if(u.hp<=0){for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++)if(S.g[s][r][c]===u){destroy(s,r,c);S.g[s][r][c]=null}if(u.boss)S.boss=null;log(`💀 ${U[u.type].n}${u.boss?' BOSS':''} ถูกทำลาย!`,'ko')}await wait(80)}
-}
-async function ult(s,p,tr,tc){
-  const u=S.g[s][p.r][p.c];if(!u||u.gauge<100)return false;u.gauge=0;sound('ult');log(`✨ ${U[u.type].n} ใช้ท่าไม้ตาย!`,'hl');
-  const foe=s==='player'?'bot':'player';
-  if(u.type==='priest'){for(const x of alive(s)){const q=pos(s,x);if(q)heal(s,q.r,q.c,Math.round(x.max*.30))}burst(W/2,H/2,[0x4ade80,0xffffff,0xc084fc],35);return true}
-  let hs=[];
-  if(u.type==='bow'){for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++)if(S.g[foe][r][c])hs.push(...calc(u,r,c,foe,true))}
-  else hs=calc(u,tr,tc,foe,true);
-  await hit(foe,hs);return true;
-}
-async function attack(s,p,tr,tc){
-  if(S.busy||S.phase!=='battle'||S.turn!==s)return;S.busy=true;
-  const u=S.g[s][p.r][p.c];if(!u){S.busy=false;return}
-  const foe=s==='player'?'bot':'player';
-  if(u.gauge>=100&&(s==='bot'||S.auto)){await ult(s,p,tr,tc);S.busy=false;if(check())return;finish(s);return}
-  if(u.type==='priest'){
-    if(tr>=0&&tc>=0&&tr<GRID&&tc<GRID&&S.g[s][tr][tc]&&S.g[s][tr][tc]!==u&&S.g[s][tr][tc].hp<S.g[s][tr][tc].max){heal(s,tr,tc,Math.round(u.max*.28));addGauge(u,18);sound('heal');await wait(120);S.busy=false;finish(s);return}
-    if(S.g[foe][tr]?.[tc]){addGauge(u,12);const d=Math.max(1,Math.round(U.priest.atk*(.85+Math.random()*.3)));await hit(foe,[{r:tr,c:tc,k:1,d,cr:false}]);addGauge(u,8);S.busy=false;if(check())return;finish(s);return}
-    S.busy=false;return;
-  }
-  const hs=calc(u,tr,tc,foe);if(!hs.length){S.busy=false;return}
-  addGauge(u,12);
-  const v=S.v[s][p.r][p.c];if(v){const x=v.x,y=v.y;scene.tweens.add({targets:v,x:cellX(tc),y:cellY(foe,hs[0].r),duration:170,yoyo:true});await wait(90);scene.tweens.add({targets:v,x,y,duration:170})}
-  await hit(foe,hs);addGauge(u,8);await wait(80);S.busy=false;if(check())return;finish(s);
-}
-function finish(s){S.turn=s==='player'?'bot':'player';render();if(S.turn==='bot')ai('bot');else if(S.auto)ai('player');else say('🟢 เทิร์นของคุณ')}
-function best(s){
-  const foe=s==='player'?'bot':'player',o=[];
-  for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){const u=S.g[s][r][c];if(!u||u.hp<=0)continue;
-    if(u.gauge>=100){o.push({p:{r,c},tr:0,tc:0,score:300});continue}
-    if(u.type==='priest'){
-      const a=alive(s).filter(x=>x!==u&&x.hp<x.max).sort((a,b)=>a.hp/a.max-b.hp/b.max)[0];
-      if(a){const p=pos(s,a);o.push({p:{r,c},tr:p.r,tc:p.c,score:120+(1-a.hp/a.max)*100});}
-      for(let tr=0;tr<GRID;tr++)for(let tc=0;tc<GRID;tc++)if(S.g[foe][tr][tc])o.push({p:{r,c},tr,tc,score:18});
-      continue;
-    }
-    for(let tr=0;tr<GRID;tr++)for(let tc=0;tc<GRID;tc++){const h=calc(u,tr,tc,foe);if(h.length)o.push({p:{r,c},tr,tc,score:h.reduce((a,x)=>a+x.d,0)})}
-  }
-  return o.sort((a,b)=>b.score-a.score)[0];
-}
-function ai(s){if(S.phase!=='battle'||S.turn!==s||S.busy)return;S.busy=true;say(s==='player'?'🤖 AUTO BATTLE — AI กำลังเล่น':'🤖 ศัตรูกำลังคิด...');setTimeout(()=>{S.busy=false;const m=best(s);if(m)attack(s,m.p,m.tr,m.tc);else{S.turn=s==='player'?'bot':'player';render();if(S.turn==='bot')ai('bot');else say('🟢 เทิร์นของคุณ')}},s==='player'?350:650)}
-function clearViews(s){for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){if(S.v[s][r][c])S.v[s][r][c].destroy();S.v[s][r][c]=null}}
-function makeEnemies(){
-  clearViews('bot');S.g.bot=grid();S.boss=null;
-  if(S.stage===5){const b=mk('cannon',true);S.boss=b;for(const [r,c] of b.cells)S.g.bot[r][c]=b;bossView();[['spear',0],['axe',1],['bow',2]].forEach(([t,c])=>{S.g.bot[2][c]=mk(t);create('bot',2,c,S.g.bot[2][c])});log(`👑 BOSS WORLD ${S.world}-5 — 2×2 + ลูกน้อง 3 ตัว`,'ko')}
-  else{const n=Math.min(7,4+Math.ceil(S.world/2)+Math.floor(S.stage/2));for(let i=0;i<n;i++){const r=Math.floor(i/GRID),c=i%GRID,t=ORDER[(i+S.world+S.stage)%6];S.g.bot[r][c]=mk(t);create('bot',r,c,S.g.bot[r][c])}}
-}
-function deploy(t,r,c){if(S.phase!=='deploy'||!S.pick||S.g.player[r][c]||alive('player').length>=MAX)return false;S.g.player[r][c]=mk(t);create('player',r,c,S.g.player[r][c]);sound('deploy');render();return true}
-function next(){
-  if(S.stage<5)S.stage++;else{S.stage=1;S.world++}
-  if(S.world>10){S.phase='complete';say('🏆 CAMPAIGN COMPLETE — ผ่านครบ 10 WORLD / 50 STAGES!');$('btnNext').style.display='none';sound('win');return}
-  S.phase='deploy';S.turn='player';S.auto=false;S.pick=null;S.selected=null;S.g.player=grid();clearViews('player');$('btnStart').style.display='block';$('btnNext').style.display='none';makeEnemies();say(`WORLD ${S.world} · STAGE ${S.stage} — จัดทัพ`);render();
-}
-function check(){const p=alive('player').length,b=alive('bot').length;if(p&&b)return false;if(!p){S.phase='over';say('💀 DEFEAT — กด เล่นใหม่ เพื่อเริ่มอีกครั้ง');$('btnReset').style.display='block';$('btnNext').style.display='none';sound('lose');return true}S.phase='over';log(`🏆 ชนะ WORLD ${S.world}-${S.stage}!`,'hl');say('🏆 VICTORY — กด ด่านถัดไป');$('btnNext').style.display='block';sound('win');return true}
-function reset(){S.phase='deploy';S.turn='player';S.auto=false;S.busy=false;S.world=1;S.stage=1;S.pick=null;S.selected=null;S.g.player=grid();clearViews('player');$('btnStart').style.display='block';$('btnNext').style.display='none';$('btnReset').style.display='block';$('log').innerHTML='';makeEnemies();say('โหมดจัดทัพ — เลือกยูนิตทางซ้าย แล้วคลิกช่อง');render()}
-function tex(sc,k,t,s){const q=sc.textures.createCanvas(k,40,40),x=q.getContext();x.fillStyle=s==='player'?'#4da3ff':'#ff6b6b';x.fillRect(7,7,26,27);x.fillStyle='#f2c48d';x.fillRect(13,10,14,11);x.fillStyle='#151923';x.fillRect(11,29,18,7);x.fillStyle='#fff';if(t==='priest'){x.fillRect(18,3,4,30);x.fillRect(10,15,20,4)}else{x.fillRect(29,19,8,3)}q.refresh()}
-function create(s,r,c,u){const q=scene.add.container(cellX(c),cellY(s,r));const sp=scene.add.image(0,0,`u_${u.type}_${s}`).setScale(1.45);const hp=scene.add.text(0,-27,`${u.hp}`,{fontFamily:'monospace',fontSize:'11px',color:'#fff',stroke:'#000',strokeThickness:4}).setOrigin(.5);const gb=scene.add.rectangle(-24,29,48,4,0xc084fc).setOrigin(0,.5);const hb=scene.add.rectangle(-24,35,48,4,0x4ade80).setOrigin(0,.5);q.add([sp,hp,gb,hb]);q.hp=hp;q.gb=gb;q.hb=hb;q.setDepth(5);S.v[s][r][c]=q}
-function bossView(){if(!S.boss)return;const cx=(cellX(2)+cellX(3))/2,cy=(cellY('bot',0)+cellY('bot',1))/2;const q=scene.add.container(cx,cy);const b=scene.add.rectangle(0,0,C*2+GAP-6,C*2+GAP-6,0x7f1d1d).setStrokeStyle(5,0xffd166);const t=scene.add.text(0,0,'👑',{fontSize:'48px'}).setOrigin(.5);const hp=scene.add.text(0,-73,`${S.boss.hp}`,{fontFamily:'monospace',fontSize:'15px',color:'#fff',stroke:'#000',strokeThickness:5}).setOrigin(.5);q.add([b,t,hp]);q.hp=hp;q.setDepth(4);S.v.bot[0][2]=q;S.v.bot[0][3]=q;S.v.bot[1][2]=q;S.v.bot[1][3]=q}
-function update(s,r,c){const u=S.g[s][r][c],v=S.v[s][r][c];if(!u||!v)return;v.hp?.setText(`${u.hp}`);if(!u.boss){if(v.hb)v.hb.width=48*u.hp/u.max;if(v.gb)v.gb.width=48*u.gauge/100}else if(v.hp)v.hp.setText(`${u.hp}`)}
-function destroy(s,r,c){const v=S.v[s][r][c];if(v)v.destroy();S.v[s][r][c]=null}
-function burst(x,y,cs,n){for(let i=0;i<n;i++){const q=scene.add.rectangle(x,y,4,4,cs[i%cs.length]).setDepth(100);scene.tweens.add({targets:q,x:x+(Math.random()-.5)*80,y:y+(Math.random()-.5)*80,alpha:0,duration:330,onComplete:()=>q.destroy()})}}
-function float(x,y,t,col,cr=false){const q=scene.add.text(x,y-8,t,{fontFamily:'monospace',fontSize:cr?'20px':'16px',color:col,stroke:'#000',strokeThickness:5}).setOrigin(.5).setDepth(110);scene.tweens.add({targets:q,y:y-52,alpha:0,duration:700,onComplete:()=>q.destroy()})}
-function renderPicker(){$('picker').innerHTML=ORDER.map(t=>`<button data-t="${t}" class="${S.pick===t?'on':''}"><b>${U[t].i} ${U[t].n}</b><small>HP ${U[t].hp} · ATK ${U[t].atk} · ULT +30%${t==='priest'?' · ฮีลเพื่อน / ฮีลหมู่':''}</small></button>`).join('')}
-function render(){renderPicker();for(const s of ['player','bot'])for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++)if(S.g[s][r][c])update(s,r,c);$('cnt').textContent=alive('player').length;$('campaign').textContent=`WORLD ${S.world}/10 · STAGE ${S.stage}/5${S.stage===5?' · 👑 BOSS':''}`;$('btnAuto').style.display=S.phase==='battle'?'block':'none';$('btnAuto').textContent=S.auto?'⏹ หยุด AUTO':'🤖 AUTO BATTLE'}
-$('picker').onclick=e=>{const b=e.target.closest('button');if(b&&S.phase==='deploy'){S.pick=S.pick===b.dataset.t?null:b.dataset.t;render()}};
-$('btnStart').onclick=()=>{if(!alive('player').length){say('⚠️ กรุณาวางยูนิตอย่างน้อย 1 ตัว');return}S.phase='battle';S.turn='player';S.pick=null;S.selected=null;$('btnStart').style.display='none';log(`════ ⚔️ WORLD ${S.world}-${S.stage} ════`,'hl');say('🟢 เทิร์นของคุณ — คลิกยูนิต แล้วคลิกเป้าหมาย');render()};
-$('btnAuto').onclick=()=>{S.auto=!S.auto;render();if(S.auto&&S.turn==='player')ai('player')};
-$('btnNext').onclick=next;$('btnReset').onclick=reset;
-function pointer(){if(S.phase==='deploy'){const p=boardCellAt(scene.input.activePointer,'player');if(p)deploy(S.pick,p.r,p.c);return}if(S.phase!=='battle'||S.turn!=='player'||S.busy)return;const p=boardCellAt(scene.input.activePointer,'player');const e=boardCellAt(scene.input.activePointer,'bot');if(p&&S.g.player[p.r][p.c]){S.selected=S.selected&&S.selected.r===p.r&&S.selected.c===p.c?null:p;render();say(S.selected?`เลือก ${U[S.g.player[p.r][p.c].type].n} — คลิกเป้าหมายศัตรู/เพื่อน`:'เลือกยูนิต');return}if(!S.selected)return;const u=S.g.player[S.selected.r][S.selected.c];if(!u)return;if(e){attack('player',S.selected,e.r,e.c);S.selected=null;return}if(p&&u.type==='priest'&&S.g.player[p.r][p.c]&&S.g.player[p.r][p.c]!==u){attack('player',S.selected,p.r,p.c);S.selected=null}}
-scene=new Phaser.Scene('Battle');scene.preload=function(){for(const t of ORDER){tex(this,`u_${t}_player`,t,'player');tex(this,`u_${t}_bot`,t,'bot')}};scene.create=function(){
-  scene=this;this.cameras.main.setBackgroundColor('#0b0f1a');
-  this.add.text(W/2,14,'ENEMY', {fontFamily:'monospace',fontSize:'14px',color:'#ff6b6b'}).setOrigin(.5);
-  this.add.text(W/2,GRID*(C+GAP)+40,'YOUR ARMY',{fontFamily:'monospace',fontSize:'14px',color:'#4da3ff'}).setOrigin(.5);
-  for(const s of ['player','bot'])for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++)this.add.rectangle(cellX(c),cellY(s,r),C,C,0x151d2c).setStrokeStyle(1,0x2b3448);
-  this.input.on('pointerdown',pointer);makeEnemies();render();
-};
-new Phaser.Game({type:Phaser.AUTO,width:W,height:H,parent:'stage',backgroundColor:'#0b0f1a',scene:[scene],scale:{mode:Phaser.Scale.FIT,autoCenter:Phaser.Scale.CENTER_BOTH},render:{antialias:true}});
+function float(x,y,text,color,crit=false){const t=scene.add.text(x+(Math.random()-.5)*28,y-8,text,{fontFamily:'"Press Start 2P"',fontSize:crit?'14px':'11px',color,stroke:'#000',strokeThickness:4}).setOrigin(.5).setDepth(100);scene.tweens.add({targets:t,y:y-52,alpha:0,scale:crit?1.35:1.08,duration:800,onComplete:()=>t.destroy()})}
+function burst(x,y,colors,n=8){for(let i=0;i<n;i++){const p=scene.add.rectangle(x,y,3,3,colors[i%colors.length]).setDepth(90);const a=Math.random()*Math.PI*2,d=18+Math.random()*34;scene.tweens.add({targets:p,x:x+Math.cos(a)*d,y:y+Math.sin(a)*d,alpha:0,duration:300+Math.random()*250,onComplete:()=>p.destroy()})}}
+function clearViews(side){const seen=new Set();for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){const v=S.v[side][r][c];if(v&&!seen.has(v)){seen.add(v);v.destroy()}S.v[side][r][c]=null}if(side==='bot'&&S.bossView){S.bossView.destroy();S.bossView=null}}
+function makeUnitView(side,r,c,u){if(u.boss){if(S.bossView)return S.bossView;const centerX=(cx(1)+cx(2))/2,centerY=(cy('bot',0)+cy('bot',1))/2;const co=scene.add.container(centerX,centerY).setDepth(10);const box=scene.add.rectangle(0,0,CELL*2+GAP-8,CELL*2+GAP-8,0x8f2630).setStrokeStyle(4,0xff6b6b);const icon=scene.add.text(0,-4,'👑',{fontSize:'42px'}).setOrigin(.5);const hp=scene.add.text(0,38,`${u.hp}/${u.max}`,{fontFamily:'"Press Start 2P"',fontSize:'9px',color:'#4ade80',stroke:'#000',strokeThickness:4}).setOrigin(.5);const role=scene.add.text(0,-42,'BOSS',{fontFamily:'"Press Start 2P"',fontSize:'8px',color:'#fff',stroke:'#000',strokeThickness:3}).setOrigin(.5);co.add([box,icon,role,hp]);co.hp=hp;S.bossView=co;for(const [rr,cc] of u.cells)S.v.bot[rr][cc]=co;return co}
+  const co=scene.add.container(cx(c),cy(side,r)).setDepth(10),body=scene.add.rectangle(0,0,42,52,side==='player'?0x4da3ff:0xff6b6b).setStrokeStyle(2,0x0b0f1a),face=scene.add.rectangle(0,-10,16,14,0xf2c48d),we=scene.add.text(side==='player'?13:-13,0,TYPES[u.type].icon,{fontSize:'23px'}).setOrigin(.5),hp=scene.add.text(0,-36,`${u.hp}`,{fontFamily:'"Press Start 2P"',fontSize:'8px',color:'#4ade80',stroke:'#000',strokeThickness:4}).setOrigin(.5),bg=scene.add.rectangle(0,31,48,5,0x111827),fill=scene.add.rectangle(-24,31,48,5,0xc084fc).setOrigin(0,.5),role=scene.add.text(0,39,TYPES[u.type].role,{fontFamily:'"Press Start 2P"',fontSize:'5px',color:'#fff',stroke:'#000',strokeThickness:3}).setOrigin(.5),ready=scene.add.text(0,-48,'ULT',{fontFamily:'"Press Start 2P"',fontSize:'6px',color:'#c084fc',stroke:'#000',strokeThickness:3}).setOrigin(.5).setVisible(false);co.add([body,face,we,hp,bg,fill,role,ready]);co.hp=hp;co.fill=fill;co.ready=ready;S.v[side][r][c]=co;return co}
+function updateView(side,r,c){const u=S.g[side][r][c],v=S.v[side][r][c];if(!u){if(v){let shared=false;for(let rr=0;rr<GRID;rr++)for(let cc=0;cc<GRID;cc++)if(S.v[side][rr][cc]===v&&!(rr===r&&cc===c))shared=true;if(!shared)v.destroy();S.v[side][r][c]=null}return}if(u.boss){makeUnitView(side,r,c,u);if(S.bossView)S.bossView.hp.setText(`${u.hp}/${u.max}`);return}const co=v||makeUnitView(side,r,c,u);co.hp.setText(`${u.hp}`);co.fill.width=48*u.gauge/100;co.ready.setVisible(u.gauge>=100)}
+function refresh(){for(const side of ['bot','player'])for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++)updateView(side,r,c);campaign();$('cnt').textContent=alive('player').length;const u=S.selected;const ready=u&&u.gauge>=100;$('btnUlt').style.display=ready?'block':'none';$('btnUlt').classList.toggle('ready',!!ready)}
+function drawBoard(){for(const side of ['bot','player'])for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){const x=cx(c),y=cy(side,r);scene.add.rectangle(x,y,CELL,CELL,0x1e2740).setStrokeStyle(3,0x59657c);scene.add.text(x-CELL/2+7,y-CELL/2+7,coord(r,c),{fontFamily:'"Press Start 2P"',fontSize:'7px',color:'#8496b5'}).setDepth(2);scene.add.zone(x,y,CELL,CELL).setInteractive().on('pointerdown',()=>cellClick(side,r,c))}}
+function deploy(type,r,c){if(S.phase!=='deploy'||!S.pick||S.g.player[r][c]||alive('player').length>=MAX)return;S.g.player[r][c]=mk(type);S.selected=null;sound('deploy');refresh()}
+function targets(side,type,r,c,ultimate=false){const g=S.g[side];const rows=front(side);if(ultimate){if(type==='sword')return[{r,c,k:1.3},{r:r-1,c,k:.8},{r:r+1,c,k:.8},{r,c:c-1,k:.8},{r,c:c+1,k:.8}];if(type==='spear')return rows.map(rr=>({r:rr,c,k:1.3}));if(type==='gun')return rows.map((rr,i)=>({r:rr,c,k:1.3-.15*i}));if(type==='bow')return Array.from({length:GRID},(_,rr)=>Array.from({length:GRID},(_,cc)=>({r:rr,c:cc,k:1.3}))).flat();if(type==='cannon')return Array.from({length:GRID},(_,rr)=>Array.from({length:GRID},(_,cc)=>({r:rr,c:cc,k:rr===r&&cc===c?1.3:.65}))).flat();if(type==='axe'){const fr=rows.find(rr=>g[rr].some(u=>u&&u.hp>0));return fr==null?[]:[0,1,2].map(cc=>({r:fr,c:cc,k:1.3}))}}
+  if(type==='bow')return[{r,c,k:1}];
+  if(type==='axe'){const fr=rows.find(rr=>g[rr].some(u=>u&&u.hp>0));return fr==null?[]:[0,1,2].map(cc=>({r:fr,c:cc,k:1}))}
+  if(type==='cannon')return[{r,c,k:.7},{r:r-1,c,k:.45},{r:r+1,c,k:.45},{r,c:c-1,k:.45},{r,c:c+1,k:.45}];
+  const line=rows.filter(rr=>g[rr][c]?.hp>0),q=type==='gun'?[1,.6,.3]:type==='spear'?[1,.5]:[1];return line.slice(0,q.length).map((rr,i)=>({r:rr,c,k:q[i]}))}
+function calc(u,r,c,foe,ultimate=false){if(u.type==='priest')return[];const a=TYPES[u.type];return targets(foe,u.type,r,c,ultimate).filter(h=>h.r>=0&&h.r<GRID&&h.c>=0&&h.c<GRID&&S.g[foe][h.r][h.c]?.hp>0).map(h=>{const crit=Math.random()<a.crit;let d=Math.max(1,Math.round(a.atk*h.k*(.85+Math.random()*.3)));if(crit)d=Math.round(d*1.5);return{...h,d,crit}})}
+async function hit(foe,hits){for(const h of hits){let u=S.g[foe][h.r][h.c];if(!u||u.hp<=0)continue;if(u.boss)u=S.boss;if(!u||u.hp<=0)continue;u.hp=Math.max(0,u.hp-h.d);addGauge(u,8);const x=u.boss?(cx(1)+cx(2))/2:cx(h.c),y=u.boss?(cy('bot',0)+cy('bot',1))/2:cy(foe,h.r);float(x,y,`${h.crit?'CRIT! ':''}-${h.d}`,h.crit?'#ff3333':'#fff',h.crit);burst(x,y,h.crit?[0xffffff,0xff3333,0xffd166]:[0xffffff,0xffd166],h.crit?14:7);sound(u.type);log(`→ ${TYPES[u.type].name} ${h.crit?'CRIT ':''}${h.d} dmg · HP ${u.hp}`,'dm');if(u.hp<=0){if(u.boss){for(const [rr,cc] of u.cells)S.g.bot[rr][cc]=null;S.boss=null;if(S.bossView){S.bossView.destroy();S.bossView=null}}else{S.g[foe][h.r][h.c]=null;if(S.v[foe][h.r][h.c]){S.v[foe][h.r][h.c].destroy();S.v[foe][h.r][h.c]=null}}log(`💀 ${TYPES[u.type].name}${u.boss?' BOSS':''} ถูกทำลาย!`,'ko')}refresh();await wait(70)}}
+async function heal(side,r,c,amount){const u=S.g[side][r][c];if(!u||u.hp>=u.max)return false;const n=Math.min(amount,u.max-u.hp);u.hp+=n;float(cx(c),cy(side,r),`+${n}`,'#4ade80');burst(cx(c),cy(side,r),[0x4ade80,0xffffff],10);sound('heal');log(`✚ ${TYPES[u.type].name} ฟื้น HP +${n}`,'hl');refresh();return true}
+async function ultimate(side,p,tr,tc){const u=S.g[side][p.r][p.c];if(!u||u.gauge<100)return false;u.gauge=0;const foe=side==='player'?'bot':'player';sound('ult');log(`✨ ${TYPES[u.type].name} ใช้ ULTIMATE!`,'hl');if(u.type==='priest'){for(const x of alive(side)){const q=pos(side,x);if(q)await heal(side,q.r,q.c,Math.round(x.max*.3))}burst(W/2,H/2,[0x4ade80,0xffffff,0xc084fc],28);return true}await hit(foe,calc(u,tr,tc,foe,true));refresh();return true}
+async function attack(side,p,tr,tc,useUlt=false){if(S.busy||S.phase!=='battle'||S.turn!==side)return;const u=S.g[side][p.r][p.c];if(!u){return}S.busy=true;const foe=side==='player'?'bot':'player';if(useUlt||u.gauge>=100&&side==='bot'){await ultimate(side,p,tr,tc);S.busy=false;if(checkEnd())return;finish(side);return}
+  if(u.type==='priest'){if(S.g[side][tr][tc]&&S.g[side][tr][tc]!==u&&S.g[side][tr][tc].hp<S.g[side][tr][tc].max){await heal(side,tr,tc,Math.round(u.max*.28));addGauge(u,18);S.busy=false;finish(side);return}if(S.g[foe][tr][tc]){addGauge(u,12);const crit=Math.random()<u.crit,d=Math.max(1,Math.round(u.atk*(.85+Math.random()*.3)*(crit?1.5:1)));await hit(foe,[{r:tr,c:tc,d,crit}]);addGauge(u,8);S.busy=false;if(checkEnd())return;finish(side);return}S.busy=false;return}
+  const hs=calc(u,tr,tc,foe,false);if(!hs.length){S.busy=false;return}addGauge(u,12);const v=S.v[side][p.r][p.c];if(v&&!u.boss){const x=v.x,y=v.y;await new Promise(res=>scene.tweens.add({targets:v,x:cx(tc),y:cy(foe,hs[0].r),duration:160,yoyo:true,onComplete:res}));v.x=x;v.y=y}await hit(foe,hs);addGauge(u,8);refresh();S.busy=false;if(checkEnd())return;finish(side)}
+function finish(side){S.selected=null;S.turn=side==='player'?'bot':'player';refresh();if(S.turn==='bot')ai('bot');else if(S.auto)ai('player');else say('🟢 เทิร์นของคุณ — คลิกยูนิตแล้วเลือกเป้าหมาย')}
+function best(side){const foe=side==='player'?'bot':'player',out=[];for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){const u=S.g[side][r][c];if(!u||u.hp<=0)continue;if(u.gauge>=100){out.push({p:{r,c},tr:0,tc:0,score:10000});continue}if(u.type==='priest'){const ally=alive(side).filter(x=>x!==u&&x.hp<x.max).sort((a,b)=>a.hp/a.max-b.hp/b.max)[0];if(ally){const q=pos(side,ally);out.push({p:{r,c},tr:q.r,tc:q.c,score:500+(1-ally.hp/ally.max)*100})}for(let tr=0;tr<GRID;tr++)for(let tc=0;tc<GRID;tc++)if(S.g[foe][tr][tc])out.push({p:{r,c},tr,tc,score:20});continue}for(let tr=0;tr<GRID;tr++)for(let tc=0;tc<GRID;tc++){const h=calc(u,tr,tc,foe);if(h.length)out.push({p:{r,c},tr,tc,score:h.reduce((a,x)=>a+x.d,0)})}}return out.sort((a,b)=>b.score-a.score)[0]}
+function ai(side){if(S.phase!=='battle'||S.turn!==side||S.busy)return;S.busy=true;say(side==='player'?'🤖 AUTO BATTLE — AI กำลังเล่น':'🤖 ศัตรูกำลังคิด...');setTimeout(()=>{S.busy=false;let m=best(side);if(m)attack(side,m.p,m.tr,m.tc);else{S.turn=side==='player'?'bot':'player';if(S.turn==='bot')ai('bot');else say('🟢 เทิร์นของคุณ')}},side==='player'?350:S.ai==='easy'?500:S.ai==='hard'?950:700)}
+function makeEnemies(){clearViews('bot');S.g.bot=grid();S.boss=null;if(S.stage===5){const b=mk('cannon',true);S.boss=b;for(const [r,c] of b.cells)S.g.bot[r][c]=b;makeUnitView('bot',0,1,b);const mins=[['spear',2,0],['axe',2,1],['bow',2,2]];for(const [t,r,c] of mins)S.g.bot[r][c]=mk(t);log(`👑 BOSS WORLD ${S.world}-5 — 2×2 + ลูกน้อง 3 ตัว`,'ko')}else{const n=Math.min(7,4+Math.ceil(S.world/2)+Math.floor(S.stage/2));for(let i=0;i<n;i++){const r=Math.floor(i/GRID),c=i%GRID,t=ORDER[(i+S.world+S.stage)%6];S.g.bot[r][c]=mk(t)}}refresh()}
+function renderAll(){clearViews('player');if(S.bossView){S.bossView.destroy();S.bossView=null}for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){if(S.g.bot[r][c])makeUnitView('bot',r,c,S.g.bot[r][c]);if(S.g.player[r][c])makeUnitView('player',r,c,S.g.player[r][c])}refresh()}
+function start(){if(alive('player').length===0){say('⚠️ ต้องวางยูนิตอย่างน้อย 1 ตัว');return}S.phase='battle';S.turn='player';S.selected=null;$('btnStart').style.display='none';$('btnRandom').style.display='none';$('btnClear').style.display='none';$('btnAuto').style.display='block';$('editBar').style.display='flex';$('btnReset').style.display='none';log(`⚔️ WORLD ${S.world}-${S.stage} เริ่มการต่อสู้!`,'hl');say('🟢 เทิร์นของคุณ — คลิกยูนิตแล้วเลือกเป้าหมาย');renderAll()}
+function checkEnd(){const p=alive('player').length,b=alive('bot').length;if(p&&b)return false;if(!p){S.phase='over';S.auto=false;say('💀 DEFEAT — กด เล่นใหม่ เพื่อเริ่มอีกครั้ง');$('btnAuto').style.display='none';$('btnNext').style.display='none';$('btnReset').style.display='block';sound('lose');return true}S.phase='over';S.auto=false;log(`🏆 ชนะ WORLD ${S.world}-${S.stage}!`,'hl');say(S.world===10&&S.stage===5?'🏆 CAMPAIGN COMPLETE!':'🏆 VICTORY — กด ด่านถัดไป');$('btnAuto').style.display='none';$('btnNext').style.display='block';$('btnReset').style.display='block';sound('win');campaign();return true}
+function nextStage(){if(S.world===10&&S.stage===5){S.phase='complete';$('btnNext').style.display='none';$('btnReset').style.display='block';say('🏆 CAMPAIGN COMPLETE — ผ่านครบ 10 WORLD / 50 STAGES!');campaign();return}if(S.stage<5)S.stage++;else{S.stage=1;S.world++}S.phase='deploy';S.turn='player';S.busy=false;S.auto=false;S.pick=null;S.selected=null;S.g.player=grid();clearViews('player');$('btnStart').style.display='block';$('btnRandom').style.display='block';$('btnClear').style.display='block';$('btnAuto').style.display='none';$('btnNext').style.display='none';$('btnReset').style.display='none';makeEnemies();say(`WORLD ${S.world}-${S.stage} — จัดทัพ`);renderAll()}
+function reset(){S.phase='deploy';S.turn='player';S.busy=false;S.auto=false;S.world=1;S.stage=1;S.pick=null;S.selected=null;S.g.player=grid();clearViews('player');$('btnStart').style.display='block';$('btnRandom').style.display='block';$('btnClear').style.display='block';$('btnAuto').style.display='none';$('btnNext').style.display='none';$('btnReset').style.display='none';$('log').innerHTML='';makeEnemies();say('โหมดจัดทัพ — เลือกยูนิตทางซ้าย แล้วคลิกช่อง');renderAll()}
+function clearArmy(){if(S.phase!=='deploy')return;S.g.player=grid();clearViews('player');S.selected=null;refresh()}
+function randomArmy(){if(S.phase!=='deploy')return;clearArmy();const cells=[[2,0],[2,1],[2,2],[1,0],[1,1],[1,2]];cells.sort(()=>Math.random()-.5);cells.forEach(([r,c],i)=>{const t=ORDER[Math.floor(Math.random()*ORDER.length)];S.g.player[r][c]=mk(t)});renderAll()}
+function cellClick(side,r,c){if(S.phase==='deploy'){if(side==='player'&&S.pick)deploy(S.pick,r,c);return}if(S.phase!=='battle'||S.busy)return;if(side==='player'){const u=S.g.player[r][c];if(u){S.selected=S.selected===u?null:u;refresh();say(S.selected?.gauge>=100?'✨ ULTIMATE READY — กดปุ่ม ULTIMATE หรือเลือกเป้าหมาย':'🔵 เลือกเป้าหมายฝ่ายศัตรู')}return}if(side==='bot'&&S.selected){const p=pos('player',S.selected);if(p)attack('player',p,r,c)}}
+function picker(){const el=$('picker');el.innerHTML=ORDER.map(t=>{const u=TYPES[t];return `<button data-t="${t}" class="${S.pick===t?'on':''}"><img src="${unitIcon(t)}" width="40" height="36"><span><span class="nm">${u.name} [${u.role}]</span><br><span class="ds">HP ${u.hp} · ATK ${u.atk} · CRIT ${u.crit*100|0}%<br>${u.desc}</span></span></button>`}).join('');el.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(S.phase==='deploy'){S.pick=b.dataset.t;picker()}})}
+function unitIcon(type){const c=document.createElement('canvas');c.width=40;c.height=36;const x=c.getContext('2d');x.fillStyle='#141824';x.fillRect(8,4,24,26);x.fillStyle='#4da3ff';x.fillRect(10,7,20,18);x.fillStyle='#f2c48d';x.fillRect(16,9,8,8);x.fillStyle='#cfd8e6';if(type==='sword')x.fillRect(20,0,3,18);if(type==='spear')x.fillRect(29,3,3,27);if(type==='gun')x.fillRect(26,10,12,4);if(type==='bow'){x.strokeStyle='#ffd166';x.lineWidth=2;x.strokeRect(25,5,9,22)}if(type==='cannon')x.fillRect(27,8,11,9);if(type==='axe'){x.fillStyle='#ff3333';x.fillRect(27,4,9,7);x.fillRect(30,7,3,8)}if(type==='priest'){x.fillStyle='#fff';x.fillRect(27,5,4,18);x.fillRect(22,10,14,4)}return c.toDataURL()}
+$('diff')?.querySelectorAll('button').forEach(b=>b.onclick=()=>{S.ai=b.dataset.d;$('diff').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on')});
+$('btnStart').onclick=start;$('btnRandom').onclick=randomArmy;$('btnClear').onclick=clearArmy;$('btnReset').onclick=reset;$('btnNext').onclick=nextStage;$('btnRemove').onclick=()=>{if(S.phase!=='battle'||!S.selected)return;const p=pos('player',S.selected);if(p){S.g.player[p.r][p.c]=null;S.selected=null;refresh()}};$('btnAuto').onclick=()=>{if(S.phase!=='battle')return;S.auto=!S.auto;$('btnAuto').textContent=`🤖 ต่อสู้อัตโนมัติ: ${S.auto?'เปิด':'ปิด'}`;if(S.auto&&S.turn==='player')ai('player')};$('btnUlt').onclick=()=>{if(!S.selected||S.selected.gauge<100||S.busy)return;const p=pos('player',S.selected);if(p)attack('player',p,0,0,true)};
+class Battle extends Phaser.Scene{create(){scene=this;drawBoard();picker();makeEnemies();say('โหมดจัดทัพ — เลือกยูนิตทางซ้าย แล้วคลิกช่อง');renderAll()}}
+new Phaser.Game({type:Phaser.AUTO,parent:'stage',width:W,height:H,backgroundColor:'#0d1322',pixelArt:true,scale:{mode:Phaser.Scale.FIT,autoCenter:Phaser.Scale.CENTER_BOTH},scene:Battle});
