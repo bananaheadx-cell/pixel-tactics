@@ -1,1 +1,1 @@
-// Extended systems will be loaded by Pixel Tactics.
+// Extended systems placeholder
