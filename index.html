@@ -52,6 +52,20 @@
   .bar{display:flex;gap:6px;margin-top:8px}
   .bar button{flex:1;padding:6px;border:2px solid var(--line);background:#2a3450;
               color:var(--text);border-radius:3px;cursor:pointer;font-family:Kanit;font-size:12px}
+  .btn.on{background:var(--ok);color:#04150a;box-shadow:0 3px 0 #1b6e3f}
+  .stageRow{margin-bottom:11px}
+  .stageRow:last-child{margin-bottom:2px}
+  .chapName{font-size:11px;color:var(--accent);margin-bottom:5px;font-weight:600}
+  .chapName.locked{color:var(--muted)}
+  .stageGrid{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+  .stageGrid button{aspect-ratio:1;border:2px solid var(--line);background:#202a40;color:var(--muted);
+    border-radius:3px;cursor:pointer;font-family:"Press Start 2P";font-size:9px;padding:0}
+  .stageGrid button:not(:disabled):hover{border-color:var(--accent)}
+  .stageGrid button.done{border-color:var(--ok);color:var(--ok)}
+  .stageGrid button.boss{color:#ffb454}
+  .stageGrid button.done.boss{color:var(--ok)}
+  .stageGrid button.sel{background:#23395a;border-color:var(--accent);color:var(--accent)}
+  .stageGrid button:disabled{opacity:.32;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -61,7 +75,20 @@
   <div class="layout">
     <div>
       <div class="card" style="margin-bottom:14px">
+        <h3>โหมดเกม</h3>
+        <div class="diff" id="modeSwitch">
+          <button data-m="free" class="on">โหมดอิสระ</button>
+          <button data-m="adventure">ผจญภัย</button>
+        </div>
+      </div>
+      <div class="card" id="stageSelectCard" style="display:none;margin-bottom:14px">
+        <h3>เลือกด่านผจญภัย</h3>
+        <div id="stageSelectBody"></div>
+      </div>
+      <div class="card" style="margin-bottom:14px">
         <h3>SELECT UNIT</h3>
+        <div id="stageInfo" style="display:none;font-size:11px;color:var(--muted);margin-bottom:8px;
+             background:#1d2b45;border:2px solid var(--line);border-radius:3px;padding:6px 8px"></div>
         <div class="pick" id="picker"></div>
         <div class="counter">วางแล้ว <b id="cnt">0</b> / 6</div>
         <div class="diff" id="diff">
@@ -73,8 +100,12 @@
           <button data-act="remove">✖ ลบยูนิตที่เลือก</button>
         </div>
         <button class="btn" id="btnStart">▶ เริ่มการต่อสู้</button>
+        <button class="btn ghost" id="btnChangeStage" style="display:none">🗺 เปลี่ยนด่าน</button>
         <button class="btn ghost" id="btnRandom">🎲 สุ่มจัดทัพ</button>
         <button class="btn ghost" id="btnClear">🗑 ล้างกระดาน</button>
+        <button class="btn ghost" id="btnAutoBattle" style="display:none">🤖 Auto Battle: OFF</button>
+        <button class="btn" id="btnNextStage" style="display:none">➡ ด่านต่อไป</button>
+        <button class="btn ghost" id="btnRetryStage" style="display:none">🔁 ลองด่านนี้อีกครั้ง</button>
         <button class="btn ghost" id="btnReset" style="display:none">🔄 เล่นใหม่</button>
       </div>
       <div class="card"><h3>BATTLE LOG</h3><div id="log"></div></div>
@@ -92,6 +123,29 @@
    ═══════════════════════════════════════════════════════════ */
 const GRID = 3, MAX_UNITS = 6, CELL = 88, GAP = 8, PAD = 16;
 const TEAM = { player:'#4da3ff', bot:'#ff6b6b' };
+
+/* ═══ Adventure Mode: 5 บท × 10 ด่าน (ด่านที่ 10 ของแต่ละบท = Boss 2×2) ═══ */
+const STAGES_PER_CHAPTER = 10, CHAPTER_COUNT = 5;
+const CHAPTERS = [
+  {name:'ที่ราบเริ่มต้น',   boss:'หัวหน้าโจรป่า'},
+  {name:'ป่าพิษเงามืด',     boss:'แมงมุมยักษ์จอมพิษ'},
+  {name:'ทะเลทรายเพลิง',   boss:'ปีศาจเพลิงทะเลทราย'},
+  {name:'ยอดเขาน้ำแข็ง',   boss:'มังกรน้ำแข็งโบราณ'},
+  {name:'ปราสาทมืด',       boss:'จอมมารราชาปราสาทมืด'},
+];
+const BOSS_WEAPON_BY_CHAPTER = ['axe','spear','gun','cannon','sword'];
+
+function loadProgress(){
+  try{
+    const raw = localStorage.getItem('pixelTactics_campaign_v1');
+    if(raw){ const p = JSON.parse(raw); if(p && p.unlocked && p.cleared) return p; }
+  }catch(e){}
+  return { unlocked:{1:1,2:0,3:0,4:0,5:0}, cleared:{} };
+}
+function saveProgress(){
+  try{ localStorage.setItem('pixelTactics_campaign_v1', JSON.stringify(campaignProgress)); }catch(e){}
+}
+let campaignProgress = loadProgress();
 
 const BODY = [
 "................",
@@ -120,6 +174,7 @@ const WEAPONS = {
   bow   : ["..6...",".6.9..",".6..9.","6...9.","6...9.","6...9.",".6..9.",".6.9..","..6...","......","......","......"],
   cannon: ["......","......",".1111.",".6666.",".6666.",".1111.","..88..",".8888.",".8888.",".8888.",".8888.","......"],
   axe   : ["......","....RR","...RRR","..RRRR",".RRRRR","...RRR","....77",".....7",".....7",".....7",".....7",".....7"],
+  priest: ["..9...",".999..","..9...","..9...","..7...","..7...","..7...","..7...","..7...","..7...","..7...","......"],
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -128,7 +183,8 @@ const WEAPONS = {
 const newGrid = () => Array.from({length:GRID},()=>Array(GRID).fill(null));
 const S = { phase:'deploy', turn:'player', busy:false, ai:'normal',
             g:{player:newGrid(),bot:newGrid()}, v:{player:newGrid(),bot:newGrid()},
-            pick:null, selected:null, attacker:null };
+            pick:null, selected:null, attacker:null,
+            mode:'free', campaign:null, autoBattle:false };
 
 const $     = id => document.getElementById(id);
 const inB   = (r,c) => r>=0&&r<GRID&&c>=0&&c<GRID;
@@ -178,23 +234,44 @@ const UNIT_TYPES = {
   spear : { name:'หอก', icon:'⟶', role:'PIERCE', hp:115, atk:40, crit:0.10, ds:'แทง: ตัวหน้า + ตัวถัดไปที่ติดกันเท่านั้น (100% / 50%)', targets:(r,c,side)=>spearTargets(side,c) },
   gun   : { name:'ปืน', icon:'▰', role:'RIFLE', hp:95, atk:34, crit:0.15, ds:'ยิงทะลุคอลัมน์ 100 / 60 / 30%', targets:(r,c,side)=>pierceColumn(side,c,[1.00,0.60,0.30]) },
   bow   : { name:'ธนู', icon:'➶', role:'RANGED', hp:75, atk:56, crit:0.20, ds:'เล็งช่องใดก็ได้ (100%)', targets:(r,c)=>[{r,c,ratio:1.00}] },
-  cannon: { name:'ปืนใหญ่', icon:'✹', role:'BLAST', hp:60, atk:30, crit:0.08, ds:'กากบาท: กลาง 70% + รอบข้าง 45%', targets:(r,c)=>[{r,c,ratio:0.70}, ...[[-1,0],[1,0],[0,-1],[0,1]].map(([a,b])=>({r:r+a,c:c+b,ratio:0.45}))] },
+  cannon: { name:'ปืนใหญ่', icon:'✹', role:'BLAST', hp:60, atk:44, crit:0.10, ds:'กากบาท: กลาง 90% + รอบข้าง 55%', targets:(r,c)=>[{r,c,ratio:0.90}, ...[[-1,0],[1,0],[0,-1],[0,1]].map(([a,b])=>({r:r+a,c:c+b,ratio:0.55}))] },
   axe   : { name:'ขวาน', icon:'🪓', role:'ROW', hp:110, atk:30, crit:0.12, ds:'ฟันแถว: โจมตีแนวนอน 3 ช่อง · ห้ามข้ามแนวหน้า', targets:(r,c,side)=>rowTargets(side,r) },
+  priest: { name:'นักบวช', icon:'🙏', role:'SUPPORT', hp:70, atk:20, crit:0.05,
+            ds:'สวดมนต์: โจมตีช่องใดก็ได้ (ดาเมจต่ำ) · คลิกพันธมิตรเพื่อฮีล',
+            canHeal:true, healRatio:1.6, // ฮีลปกติ = atk * healRatio
+            targets:(r,c)=>[{r,c,ratio:1.00}] } // โจมตีปกติ: เลือกเป้าใดก็ได้เหมือนธนู
 };
-const ORDER  = ['sword','spear','gun','bow','cannon','axe'];
+const ORDER  = ['sword','spear','gun','bow','cannon','axe','priest'];
 const MELEE  = ['sword','spear'];
 const COLUMN_WEAPONS = ['sword','spear','gun'];
-const mkUnit = t => ({type:t, hp:UNIT_TYPES[t].hp, max:UNIT_TYPES[t].hp});
+const mkUnit = (t, mult=1) => {
+  const T = UNIT_TYPES[t];
+  const hp = Math.round(T.hp*mult);
+  return mult===1 ? {type:t, hp, max:hp} : {type:t, hp, max:hp, atk:Math.round(T.atk*mult)};
+};
+function makeBoss(chapter){
+  const idx = chapter-1;
+  const type = BOSS_WEAPON_BY_CHAPTER[idx % BOSS_WEAPON_BY_CHAPTER.length];
+  const T = UNIT_TYPES[type];
+  const hpMult  = 5 + idx*1.6;
+  const atkMult = 1.7 + idx*0.4;
+  const hp = Math.round(T.hp*hpMult);
+  return { type, isBoss:true, size:2, hp, max:hp,
+           atk: Math.round(T.atk*atkMult),
+           crit: Math.min(0.35, (T.crit||0) + 0.04*idx) };
+}
 
 /* ═══════════════════════════════════════════════════════════
    3) CORE — คำนวณดาเมจ
    ═══════════════════════════════════════════════════════════ */
 function calculateDamage(unit, tr, tc, foeSide){
   const T = UNIT_TYPES[unit.type];
+  const atk  = unit.atk  != null ? unit.atk  : T.atk;
+  const crit = unit.crit != null ? unit.crit : T.crit;
   return T.targets(tr,tc,foeSide).filter(h=>inB(h.r,h.c)).map(h=>{
-    const critical=Math.random()<(T.crit||0);
+    const critical=Math.random()<(crit||0);
     const variance=0.85+Math.random()*0.30;
-    const base=Math.max(1,Math.round(T.atk*h.ratio*variance));
+    const base=Math.max(1,Math.round(atk*h.ratio*variance));
     return {r:h.r,c:h.c,ratio:h.ratio,damage:critical?Math.round(base*1.5):base,critical};
   });
 }
@@ -289,7 +366,8 @@ new Phaser.Game({
    6) UNIT VIEW (เอาไอคอนเหนือกหัวออกแล้ว)
    ═══════════════════════════════════════════════════════════ */
 function createView(side,r,c,unit){
-  const co = scene.add.container(cellX(c), cellY(side,r));
+  const x = cellX(c), y = cellY(side,r);
+  const co = scene.add.container(x, y);
   const shadow = scene.add.ellipse(0,26,44,12,0x000000,.35);
   const spr = scene.add.image(0,0,`u_${unit.type}_${side}`).setScale(1.1);
   if(side==='bot') spr.setFlipX(true);
@@ -298,10 +376,11 @@ function createView(side,r,c,unit){
   const hpTxt = scene.add.text(0,-30,`${unit.hp}`,
     {fontFamily:'"Press Start 2P"',fontSize:'10px',color:'#4ade80',
      stroke:'#000',strokeThickness:4}).setOrigin(.5);
-  const role=scene.add.text(0,43,unit.role,{fontFamily:'"Press Start 2P"',fontSize:'5px',color:'#dbe7ff',stroke:'#000',strokeThickness:3}).setOrigin(.5);
+  const role=scene.add.text(0,43,UNIT_TYPES[unit.type].role,{fontFamily:'"Press Start 2P"',fontSize:'5px',color:'#dbe7ff',stroke:'#000',strokeThickness:3}).setOrigin(.5);
   
   co.add([shadow,spr,bg,bar,hpTxt,role]);
   co.spr=spr; co.bar=bar; co.hpTxt=hpTxt; co.role=role;
+  co.homeX=x; co.homeY=y; co.barWidth=50;
   scene.tweens.add({targets:spr, y:{from:0,to:-4}, duration:900+Math.random()*400,
                     yoyo:true, repeat:-1, ease:'Sine.easeInOut'});
   co.setScale(0); scene.tweens.add({targets:co, scale:1, duration:260, ease:'Back.easeOut'});
@@ -309,10 +388,36 @@ function createView(side,r,c,unit){
   return co;
 }
 
+/* บอส 2×2: กินพื้นที่ 4 ช่อง (ar,ac) ถึง (ar+1,ac+1) แชร์ออบเจ็กต์ยูนิตและวิวเดียวกันในทุกช่อง */
+function createBossView(side,ar,ac,unit){
+  const cx = (cellX(ac)+cellX(ac+1))/2, cy = (cellY(side,ar)+cellY(side,ar+1))/2;
+  const co = scene.add.container(cx, cy);
+  const glow = scene.add.circle(0,4,58,0xff3355,0.16);
+  scene.tweens.add({targets:glow, scale:{from:0.92,to:1.18}, duration:950, yoyo:true, repeat:-1, ease:'Sine.easeInOut'});
+  const shadow = scene.add.ellipse(0,58,96,20,0x000000,.4);
+  const spr = scene.add.image(0,0,`u_${unit.type}_${side}`).setScale(2.3);
+  if(side==='bot') spr.setFlipX(true);
+  const bg  = scene.add.rectangle(0,74,112,10,0x000000).setStrokeStyle(2,0x141824);
+  const bar = scene.add.rectangle(-54,74,108,6,0xff5a5a).setOrigin(0,.5);
+  const hpTxt = scene.add.text(0,-66,`${unit.hp}`,
+    {fontFamily:'"Press Start 2P"',fontSize:'13px',color:'#ff5a5a',
+     stroke:'#000',strokeThickness:5}).setOrigin(.5);
+  const role=scene.add.text(0,88,'☠ BOSS',{fontFamily:'"Press Start 2P"',fontSize:'9px',color:'#ffd166',stroke:'#000',strokeThickness:3}).setOrigin(.5);
+
+  co.add([glow,shadow,spr,bg,bar,hpTxt,role]);
+  co.spr=spr; co.bar=bar; co.hpTxt=hpTxt; co.role=role;
+  co.homeX=cx; co.homeY=cy; co.barWidth=108;
+  scene.tweens.add({targets:spr, y:{from:0,to:-6}, duration:1100, yoyo:true, repeat:-1, ease:'Sine.easeInOut'});
+  co.setScale(0); scene.tweens.add({targets:co, scale:1, duration:380, ease:'Back.easeOut'});
+  for(let dr=0;dr<2;dr++) for(let dc=0;dc<2;dc++) S.v[side][ar+dr][ac+dc] = co;
+  return co;
+}
+
 function updateHp(side,r,c){
   const u=S.g[side][r][c], v=S.v[side][r][c]; if(!u||!v) return;
   const p = u.hp/u.max;
-  v.bar.width = Math.max(0, 50*p);
+  const full = v.barWidth || 50;
+  v.bar.width = Math.max(0, full*p);
   const hex = p>.5 ? 0x4ade80 : p>.25 ? 0xfacc15 : 0xff5a5a;
   v.bar.fillColor = hex;
   v.hpTxt.setText(`${u.hp}`);
@@ -332,6 +437,15 @@ function burst(x,y,colors,n){
     speed:{min:60,max:200}, lifespan:520, scale:{start:2.5,end:0},
     quantity:1, tint:colors, emitting:false, gravityY:180 });
   p.setDepth(96); p.explode(n); scene.time.delayedCall(900,()=>p.destroy());
+}
+
+function healFX(x,y){
+  const p = scene.add.particles(x,y,'dot',{
+    speed:{min:30,max:90}, lifespan:700, scale:{start:2,end:0},
+    quantity:1, tint:[0x4ade80,0xffffff,0xbff7d0], emitting:false, gravityY:-70 });
+  p.setDepth(96); p.explode(16); scene.time.delayedCall(900,()=>p.destroy());
+  const ring = scene.add.circle(x,y,6,0x4ade80,0).setStrokeStyle(3,0x4ade80).setDepth(95);
+  scene.tweens.add({targets:ring, radius:34, alpha:0, duration:520, onComplete:()=>ring.destroy()});
 }
 
 /* ขยายขนาดเลข Damage ให้ใหญ่เด่นชัด */
@@ -416,10 +530,16 @@ async function applyDamage(side, hits){
         h.critical ? 'hl' : 'dm');
     if(u.hp===0){
       log(`   💀 ${UNIT_TYPES[u.type].name} (${coord(h.r,h.c)}) ถูกทำลาย!`,'ko');
-      burst(v.x, v.y, [0xffffff,0xffd166,0xff5a5a], 28);
-      scene.cameras.main.shake(180,.008);
-      S.g[side][h.r][h.c] = null;
-      S.v[side][h.r][h.c] = null;
+      burst(v.x, v.y, [0xffffff,0xffd166,0xff5a5a], u.isBoss ? 46 : 28);
+      scene.cameras.main.shake(u.isBoss ? 260 : 180, u.isBoss ? .014 : .008);
+      if(u.isBoss){
+        for(let rr=0; rr<GRID; rr++) for(let cc=0; cc<GRID; cc++){
+          if(S.g[side][rr][cc]===u){ S.g[side][rr][cc]=null; S.v[side][rr][cc]=null; }
+        }
+      }else{
+        S.g[side][h.r][h.c] = null;
+        S.v[side][h.r][h.c] = null;
+      }
       scene.tweens.add({targets:v, alpha:0, scale:1.6, angle:25, duration:420,
         onComplete:()=>v.destroy()});
     }
@@ -446,9 +566,24 @@ function clearPreview(){
   renderTiles();
 }
 function onCellHover(side,r,c){
-  if(side!=='bot' || !S.attacker || S.phase!=='battle' || S.turn!=='player' || S.busy) return;
-  clearPreview();
+  if(!S.attacker || S.phase!=='battle' || S.turn!=='player' || S.busy) return;
   const u = S.g.player[S.attacker.r][S.attacker.c]; if(!u) return;
+
+  if(side==='player'){
+    clearPreview();
+    if(!UNIT_TYPES[u.type].canHeal) return;
+    const target = S.g.player[r][c];
+    if(target && target.hp>0){
+      scene.tiles.player[r][c].setTint(target.hp<target.max ? 0x2f7a52 : 0x394a3f);
+      previewTexts.push(scene.add.text(cellX(c), cellY('player',r),
+        target.hp<target.max ? 'HEAL' : 'FULL',
+        {fontFamily:'"Press Start 2P"',fontSize:'8px',color:target.hp<target.max?'#4ade80':'#8496b5'})
+        .setOrigin(.5).setDepth(50));
+    }
+    return;
+  }
+  if(side!=='bot') return;
+  clearPreview();
 
   if(COLUMN_WEAPONS.includes(u.type))
     for(let rr=0; rr<GRID; rr++) scene.tiles.bot[rr][c].setTint(0x3b3050);
@@ -485,6 +620,25 @@ function onCellClick(side,r,c){
   if(S.turn!=='player') return;
 
   if(side==='player'){
+    if(S.attacker){
+      const healer = S.g.player[S.attacker.r][S.attacker.c];
+      if(healer && healer.hp>0 && UNIT_TYPES[healer.type].canHeal){
+        if(S.attacker.r===r && S.attacker.c===c){
+          if(healer.hp<healer.max){
+            runHeal('player', S.attacker, r, c);
+          }else{
+            S.attacker=null; renderTiles();
+            setTurn('🟢 เทิร์นของคุณ — คลิกยูนิตของคุณเพื่อโจมตี/ฮีล');
+          }
+          return;
+        }
+        const target=S.g.player[r][c];
+        if(!target||target.hp<=0) return setTurn('⚠️ ไม่มีพันธมิตรอยู่ที่ช่องนี้');
+        if(target.hp>=target.max) return setTurn('⚠️ พันธมิตรคนนี้ HP เต็มแล้ว');
+        runHeal('player', S.attacker, r, c);
+        return;
+      }
+    }
     const u=S.g.player[r][c];
     if(!u||u.hp<=0) return setTurn('⚠️ เลือกยูนิตของคุณที่ยังมีชีวิตอยู่');
     S.attacker={r,c}; renderTiles();
@@ -573,7 +727,8 @@ async function runAttack(side, from, tr, tc){
 
   const hits = calculateDamage(u, tr, tc, foe);
   const aim  = hits[0] || { r:tr, c:tc };
-  const homeX = cellX(from.c), homeY = cellY(side, from.r);
+  const homeX = v.homeX!==undefined ? v.homeX : cellX(from.c);
+  const homeY = v.homeY!==undefined ? v.homeY : cellY(side, from.r);
 
   log(`${who} ${T.name} (${coord(from.r,from.c)}) → โจมตี ${coord(aim.r,aim.c)}`,'hl');
   setTurn(`${who} ${T.name} กำลังโจมตี ${coord(aim.r,aim.c)}...`);
@@ -653,13 +808,45 @@ async function runAttack(side, from, tr, tc){
   if(checkEnd()) return;
   S.turn = foe; renderAll();
   if(S.turn==='bot') botTurn();
-  else setTurn('🟢 เทิร์นของคุณ — คลิกยูนิตของคุณเพื่อโจมตี');
+  else { setTurn('🟢 เทิร์นของคุณ — คลิกยูนิตของคุณเพื่อโจมตี'); if(S.autoBattle) autoPlayerTurn(); }
+}
+
+async function runHeal(side, from, tr, tc){
+  S.busy = true; S.attacker = null; clearPreview();
+  const u = S.g[side][from.r][from.c]; if(!u){ S.busy=false; return; }
+  const T = UNIT_TYPES[u.type];
+  const target = S.g[side][tr][tc];
+  if(!target || target.hp<=0){ S.busy=false; return; }
+  const foe = side==='player' ? 'bot' : 'player';
+  const who = side==='player' ? '[คุณ]' : '[บอท]';
+  const tv  = S.v[side][tr][tc];
+
+  const healAmount = Math.max(1, Math.round(T.atk * (T.healRatio||1.5) * (0.85+Math.random()*0.30)));
+  const before = target.hp;
+  target.hp = Math.min(target.max, target.hp + healAmount);
+  const actual = target.hp - before;
+
+  log(`${who} ${T.name} (${coord(from.r,from.c)}) → ฮีล ${coord(tr,tc)}`,'hl');
+  setTurn(`${who} ${T.name} กำลังฮีล ${coord(tr,tc)}...`);
+
+  healFX(tv.x, tv.y);
+  await wait(220);
+  updateHp(side,tr,tc);
+  popText(tv.x, tv.y, `+${actual}`, '#4ade80', false);
+  log(`   → ${UNIT_TYPES[target.type].name} (${coord(tr,tc)}) ได้รับการฮีล +${actual} · ตอนนี้ ${target.hp}/${target.max} HP`,'hl');
+
+  await wait(320);
+  S.busy = false;
+  if(checkEnd()) return;
+  S.turn = foe; renderAll();
+  if(S.turn==='bot') botTurn();
+  else { setTurn('🟢 เทิร์นของคุณ — คลิกยูนิตของคุณเพื่อโจมตี'); if(S.autoBattle) autoPlayerTurn(); }
 }
 
 /* ═══════════════════════════════════════════════════════════
    12) AI
    ═══════════════════════════════════════════════════════════ */
-const THREAT = { bow:1.35, cannon:1.30, gun:1.15, axe:1.25, spear:1.00, sword:0.85 };
+const THREAT = { bow:1.35, cannon:1.30, gun:1.15, axe:1.25, priest:1.10, spear:1.00, sword:0.85 };
 const AI_LEVELS = {
   easy  : {label:'Easy',  think:600, blunder:.70, kill:0,  overkill:0,    wound:0,  snipe:0,  threat:false, top:6},
   normal: {label:'Normal',think:850, blunder:.20, kill:25, overkill:-.35, wound:6,  snipe:0,  threat:false, top:3},
@@ -684,8 +871,8 @@ function scoreMove(atk, hits, foe, W){
   });
   return s;
 }
-function bestMove(W){
-  const me='bot', foe='player', out=[], seen=new Set();
+function bestMove(W, me='bot', foe='player'){
+  const out=[], seen=new Set();
   for(let ar=0;ar<GRID;ar++) for(let ac=0;ac<GRID;ac++){
     const u = S.g[me][ar][ac]; if(!u || u.hp<=0) continue;
     for(let tr=0;tr<GRID;tr++) for(let tc=0;tc<GRID;tc++){
@@ -701,12 +888,47 @@ function bestMove(W){
   if(Math.random() < W.blunder) return Phaser.Utils.Array.GetRandom(out);
   return Phaser.Utils.Array.GetRandom(out.slice(0, W.top));
 }
+function bestHealMove(me='bot'){
+  let best=null;
+  for(let ar=0;ar<GRID;ar++) for(let ac=0;ac<GRID;ac++){
+    const u=S.g[me][ar][ac]; if(!u||u.hp<=0||!UNIT_TYPES[u.type].canHeal) continue;
+    for(let tr=0;tr<GRID;tr++) for(let tc=0;tc<GRID;tc++){
+      if(ar===tr && ac===tc) continue;
+      const t=S.g[me][tr][tc]; if(!t||t.hp<=0) continue;
+      const missing = t.max - t.hp; if(missing<=0) continue;
+      if(!best || missing>best.missing) best={from:{r:ar,c:ac}, tr, tc, missing};
+    }
+  }
+  return best;
+}
+const AUTO_BATTLE_W = {kill:60, overkill:-.70, wound:14, snipe:10, threat:true, top:1, blunder:0};
+function autoPlayerTurn(){
+  if(!S.autoBattle || S.turn!=='player' || S.busy || S.phase!=='battle') return;
+  setTimeout(()=>{
+    if(!S.autoBattle || S.turn!=='player' || S.busy || S.phase!=='battle') return;
+    const heal = bestHealMove('player');
+    if(heal && heal.missing/S.g.player[heal.tr][heal.tc].max >= 0.35){
+      runHeal('player', heal.from, heal.tr, heal.tc);
+      return;
+    }
+    const mv = bestMove(AUTO_BATTLE_W, 'player', 'bot');
+    if(!mv) return;
+    runAttack('player', mv.from, mv.tr, mv.tc);
+  }, 550);
+}
 function botTurn(){
   const W = AI_LEVELS[S.ai];
   S.busy = true; setTurn(`🤖 บอท (${W.label}) กำลังคิด...`);
   setTimeout(()=>{
     S.busy = false;
     if(S.phase==='over') return;
+    const heal = bestHealMove();
+    if(heal && heal.missing/S.g.bot[heal.tr][heal.tc].max >= 0.35 && Math.random() > (S.ai==='easy'?0.5:0.15)){
+      const u = S.g.bot[heal.from.r][heal.from.c];
+      log(`🤖 ${UNIT_TYPES[u.type].name} ตัดสินใจฮีลพันธมิตรที่บาดเจ็บหนัก`,'ai');
+      runHeal('bot', heal.from, heal.tr, heal.tc);
+      return;
+    }
     const mv = bestMove(W);
     if(!mv) return checkEnd();
     if(S.ai==='hard')
@@ -726,6 +948,110 @@ function smartDeploy(){
 }
 
 /* ═══════════════════════════════════════════════════════════
+   13) ADVENTURE MODE — 5 บท × 10 ด่าน · ด่าน 10 มี Boss 2×2
+   ═══════════════════════════════════════════════════════════ */
+function stageAiLevel(chapter,stage){
+  if(stage===STAGES_PER_CHAPTER) return 'hard';
+  const g = (chapter-1)*STAGES_PER_CHAPTER + stage;
+  if(g<=15) return 'easy';
+  if(g<=35) return 'normal';
+  return 'hard';
+}
+function deployStageEnemies(chapter, stage){
+  S.ai = stageAiLevel(chapter, stage);
+  const isBossStage = stage===STAGES_PER_CHAPTER;
+  const globalIdx = (chapter-1)*STAGES_PER_CHAPTER + stage;
+
+  if(isBossStage){
+    const boss = makeBoss(chapter);
+    const ar=1, ac=0;
+    for(let dr=0;dr<2;dr++) for(let dc=0;dc<2;dc++) S.g.bot[ar+dr][ac+dc] = boss;
+    createBossView('bot', ar, ac, boss);
+
+    const freeCells=[]; for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++) if(!S.g.bot[r][c]) freeCells.push([r,c]);
+    Phaser.Utils.Array.Shuffle(freeCells);
+    const escortMult = 1 + (chapter-1)*0.35;
+    const escortCount = Math.min(freeCells.length, 1 + Math.floor(chapter/2));
+    const escortPool = ['bow','gun','spear','sword','priest'];
+    for(let i=0;i<escortCount;i++){
+      const [r,c]=freeCells[i];
+      const type = Phaser.Utils.Array.GetRandom(escortPool);
+      S.g.bot[r][c] = mkUnit(type, escortMult);
+      createView('bot', r, c, S.g.bot[r][c]);
+    }
+    log(`👹 ${CHAPTERS[chapter-1].boss} ปรากฏตัว! (ด่าน ${chapter}-${stage})`,'ai');
+  } else {
+    const n = Math.min(MAX_UNITS, 2 + Math.floor(globalIdx/6));
+    const mult = 1 + (globalIdx-1)*0.045;
+    const cells=[]; for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++) cells.push([r,c]);
+    Phaser.Utils.Array.Shuffle(cells);
+    const pool = ORDER.filter(t=>t!=='priest' || globalIdx>8);
+    for(let i=0;i<n;i++){
+      const [r,c]=cells[i];
+      const type = Phaser.Utils.Array.GetRandom(pool);
+      S.g.bot[r][c] = mkUnit(type, mult);
+      createView('bot', r, c, S.g.bot[r][c]);
+    }
+    log(`⚔️ ศัตรูปรากฏตัว ${n} หน่วย (ด่าน ${chapter}-${stage})`,'ai');
+  }
+}
+function onStageCleared(chapter, stage){
+  const key = `${chapter}-${stage}`;
+  campaignProgress.cleared[key] = true;
+  if(stage > (campaignProgress.unlocked[chapter]||0)) campaignProgress.unlocked[chapter]=stage;
+  if(stage===STAGES_PER_CHAPTER && chapter<CHAPTER_COUNT)
+    campaignProgress.unlocked[chapter+1] = Math.max(campaignProgress.unlocked[chapter+1]||0, 1);
+  saveProgress();
+}
+function healPlayerBoard(){
+  for(let r=0;r<GRID;r++) for(let c=0;c<GRID;c++){
+    const u=S.g.player[r][c];
+    if(u){ u.hp=u.max; updateHp('player',r,c); }
+  }
+}
+function clearBotBoard(){
+  const seen = new Set();
+  for(let r=0;r<GRID;r++) for(let c=0;c<GRID;c++){
+    const v = S.v.bot[r][c];
+    if(v && !seen.has(v)){ seen.add(v); v.destroy(); }
+    S.g.bot[r][c] = null; S.v.bot[r][c] = null;
+  }
+}
+function goToStage(chapter, stage){
+  clearBotBoard();
+  S.campaign = {chapter, stage};
+  S.phase='deploy'; S.turn='player'; S.attacker=null; S.selected=null; S.pick=null; S.busy=false;
+  $('btnReset').style.display='none';
+  $('btnNextStage').style.display='none';
+  $('btnRetryStage').style.display='none';
+  $('stageSelectCard').style.display='none';
+  setTurn(`📖 ด่าน ${chapter}-${stage}${stage===STAGES_PER_CHAPTER?' 👹 (BOSS)':''} — จัดทัพของคุณแล้วกด "เริ่มการต่อสู้"`);
+  renderAll();
+}
+function renderStageSelect(){
+  $('stageSelectBody').innerHTML = CHAPTERS.map((ch,i)=>{
+    const chapter=i+1;
+    const unlocked = campaignProgress.unlocked[chapter]||0;
+    const chapterUnlocked = unlocked>0;
+    const btns = Array.from({length:STAGES_PER_CHAPTER},(_,j)=>{
+      const stage=j+1;
+      const isBoss = stage===STAGES_PER_CHAPTER;
+      const isCleared = !!campaignProgress.cleared[`${chapter}-${stage}`];
+      const isLocked = stage>unlocked;
+      const isSel = S.campaign && S.campaign.chapter===chapter && S.campaign.stage===stage;
+      const cls=[isCleared?'done':'', isBoss?'boss':'', isSel?'sel':''].filter(Boolean).join(' ');
+      const label = isBoss ? '☠' : stage;
+      return `<button class="${cls}" data-c="${chapter}" data-s="${stage}" ${isLocked?'disabled':''}
+        title="ด่าน ${chapter}-${stage}${isBoss?' (Boss)':''}">${label}</button>`;
+    }).join('');
+    return `<div class="stageRow">
+      <div class="chapName${chapterUnlocked?'':' locked'}">${chapterUnlocked?'':'🔒 '}บทที่ ${chapter}: ${ch.name}${unlocked>=STAGES_PER_CHAPTER?' ✅':''}</div>
+      <div class="stageGrid">${btns}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════
    13) END GAME
    ═══════════════════════════════════════════════════════════ */
 function checkEnd(){
@@ -733,7 +1059,26 @@ function checkEnd(){
   if(p&&b) return false;
   S.phase='over';
   const win = b===0 && p>0;
-  const msg = (!p&&!b) ? '🤝 เสมอ!' : (win ? '🏆 VICTORY — คุณชนะ!' : '💀 DEFEAT — คุณแพ้...');
+  const draw = !p && !b;
+  let msg = draw ? '🤝 เสมอ!' : (win ? '🏆 VICTORY — คุณชนะ!' : '💀 DEFEAT — คุณแพ้...');
+  let hasNext = false;
+
+  if(S.mode==='adventure' && S.campaign){
+    const {chapter,stage} = S.campaign;
+    if(win){
+      onStageCleared(chapter,stage);
+      const bossBeat = stage===STAGES_PER_CHAPTER;
+      msg = bossBeat
+        ? `🏆 ปราบ ${CHAPTERS[chapter-1].boss} สำเร็จ! ผ่านด่าน ${chapter}-${stage} แล้ว!`
+        : `🏆 ผ่านด่าน ${chapter}-${stage} แล้ว!`;
+      if(bossBeat && chapter<CHAPTER_COUNT) msg += ` ปลดล็อกบทที่ ${chapter+1}!`;
+      if(bossBeat && chapter===CHAPTER_COUNT) msg += ' 🎉 จบเกมผจญภัยทั้ง 5 บทแล้ว ยินดีด้วย!';
+      hasNext = !(chapter===CHAPTER_COUNT && stage===STAGES_PER_CHAPTER);
+    } else if(!draw){
+      msg = `💀 แพ้ในด่าน ${chapter}-${stage}... ลองใหม่อีกครั้ง!`;
+    }
+  }
+
   log('════ '+msg+' ════','hl'); setTurn(msg);
   const t = scene.add.text(W/2, H/2, win?'VICTORY':'DEFEAT',
     {fontFamily:'"Press Start 2P"',fontSize:'26px',
@@ -741,6 +1086,10 @@ function checkEnd(){
     .setOrigin(.5).setDepth(200).setScale(0);
   scene.tweens.add({targets:t, scale:1, duration:500, ease:'Back.easeOut'});
   $('btnReset').style.display='block';
+  if(S.mode==='adventure' && S.campaign){
+    $('btnRetryStage').style.display='block';
+    $('btnNextStage').style.display = (win && hasNext) ? 'block' : 'none';
+  }
   return true;
 }
 
@@ -766,12 +1115,28 @@ function renderPicker(){
 function renderAll(){
   renderPicker(); renderTiles();
   $('cnt').textContent = count('player');
-  $('btnStart').disabled = count('player')===0 || S.phase!=='deploy';
+  const adventureNoStage = S.mode==='adventure' && !S.campaign;
+  $('btnStart').disabled = count('player')===0 || S.phase!=='deploy' || adventureNoStage;
   $('editBar').style.display = (S.phase==='deploy' && S.selected) ? 'flex' : 'none';
   [...$('diff').children].forEach(x=>{
     x.classList.toggle('on', x.dataset.d===S.ai);
     x.disabled = S.phase!=='deploy';
   });
+
+  $('btnChangeStage').style.display = (S.mode==='adventure' && S.campaign && S.phase==='deploy') ? 'block' : 'none';
+  $('btnAutoBattle').style.display = S.phase==='battle' ? 'block' : 'none';
+  $('btnAutoBattle').textContent = `🤖 Auto Battle: ${S.autoBattle ? 'ON' : 'OFF'}`;
+  $('btnAutoBattle').classList.toggle('on', S.autoBattle);
+
+  if(S.mode==='adventure' && S.campaign){
+    const {chapter,stage} = S.campaign;
+    $('stageInfo').style.display='block';
+    $('stageInfo').textContent = `📖 บทที่ ${chapter}: ${CHAPTERS[chapter-1].name} · ด่าน ${stage}/${STAGES_PER_CHAPTER}` +
+      (stage===STAGES_PER_CHAPTER ? ` · 👹 BOSS: ${CHAPTERS[chapter-1].boss}` : '') +
+      ` · AI: ${AI_LEVELS[stageAiLevel(chapter,stage)].label}`;
+  } else {
+    $('stageInfo').style.display='none';
+  }
 }
 function log(msg,cls=''){
   const d=document.createElement('div'); d.className=cls; d.textContent=msg;
@@ -811,15 +1176,72 @@ function clearBoard(){
   for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){ S.g.player[r][c]=null; destroyView('player',r,c); }
   S.selected=null;
 }
+$('modeSwitch').onclick = e=>{
+  const b=e.target.closest('button'); if(!b||S.phase!=='deploy') return;
+  S.mode = b.dataset.m;
+  [...$('modeSwitch').children].forEach(x=>x.classList.toggle('on', x===b));
+  if(S.mode==='adventure'){
+    $('diff').style.display='none';
+    if(!S.campaign){ renderStageSelect(); $('stageSelectCard').style.display='block'; }
+  } else {
+    $('diff').style.display='flex';
+    $('stageSelectCard').style.display='none';
+    S.campaign=null;
+  }
+  renderAll();
+};
+$('stageSelectBody').onclick = e=>{
+  const b=e.target.closest('button'); if(!b||b.disabled||S.phase!=='deploy') return;
+  const chapter=+b.dataset.c, stage=+b.dataset.s;
+  S.campaign = {chapter, stage};
+  $('stageSelectCard').style.display='none';
+  setTurn(`📖 เลือกด่าน ${chapter}-${stage}${stage===STAGES_PER_CHAPTER?' 👹 (BOSS)':''} — จัดทัพของคุณแล้วกด "เริ่มการต่อสู้"`);
+  renderAll();
+};
+$('btnChangeStage').onclick = ()=>{
+  if(S.phase!=='deploy') return;
+  S.campaign=null;
+  renderStageSelect();
+  $('stageSelectCard').style.display='block';
+  renderAll();
+};
+$('btnAutoBattle').onclick = ()=>{
+  S.autoBattle = !S.autoBattle;
+  log(`⚙️ Auto Battle: ${S.autoBattle?'เปิด':'ปิด'}`,'ai');
+  renderAll();
+  if(S.autoBattle) autoPlayerTurn();
+};
+$('btnNextStage').onclick = ()=>{
+  if(!S.campaign) return;
+  let {chapter,stage} = S.campaign;
+  stage++; if(stage>STAGES_PER_CHAPTER){ chapter++; stage=1; }
+  if(chapter>CHAPTER_COUNT) return;
+  healPlayerBoard();
+  goToStage(chapter, stage);
+};
+$('btnRetryStage').onclick = ()=>{
+  if(!S.campaign) return;
+  healPlayerBoard();
+  goToStage(S.campaign.chapter, S.campaign.stage);
+};
 $('btnRandom').onclick = ()=>{ if(S.phase!=='deploy')return; clearBoard(); randomDeploy('player'); log('🎲 สุ่มจัดทัพแล้ว'); renderAll(); };
 $('btnClear').onclick  = ()=>{ if(S.phase!=='deploy')return; clearBoard(); renderAll(); };
 $('btnReset').onclick  = ()=> location.reload();
 $('btnStart').onclick  = ()=>{
-  randomDeploy('bot');
+  if(S.mode==='adventure'){
+    if(!S.campaign) return;
+    deployStageEnemies(S.campaign.chapter, S.campaign.stage);
+  } else {
+    randomDeploy('bot');
+  }
   S.phase='battle'; S.turn='player'; S.pick=null; S.selected=null;
-  log(`════ ⚔️ BATTLE START (${AI_LEVELS[S.ai].label}) ════`,'hl');
+  const label = S.mode==='adventure'
+    ? `ด่าน ${S.campaign.chapter}-${S.campaign.stage} · ${AI_LEVELS[S.ai].label}`
+    : AI_LEVELS[S.ai].label;
+  log(`════ ⚔️ BATTLE START (${label}) ════`,'hl');
   setTurn('🟢 เทิร์นของคุณ — คลิกยูนิตของคุณ แล้วเลือกช่องเป้าหมายฝั่งศัตรู');
   renderAll();
+  if(S.autoBattle) autoPlayerTurn();
 };
 log('👋 ยินดีต้อนรับสู่ PIXEL TACTICS!');
 log('💡 คลิกเลือกยูนิตบนกระดาน แล้วคลิกช่องเป้าหมายเพื่อย้าย/สลับตำแหน่งได้ทันที!');
